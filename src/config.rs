@@ -20,60 +20,83 @@ pub struct Config {
 }
 
 impl Config {
-	/// Load configuration from file and environment variables
-	pub fn load() -> Result<Self, crate::Error> {
-		let mut config = Self::load_from_file()?;
+	/// Load environment variables into config
+	pub fn load_from_env(&mut self) {
+		self.llm.load_from_env();
+		self.agent.load_from_env();
+		self.tools.load_from_env();
+	}
 
-		// Override with environment variables
-		config.llm.load_from_env();
-		config.agent.load_from_env();
-		config.tools.load_from_env();
+	/// Load configuration from file and environment variables
+	///
+	/// Priority:
+	/// 1. `KLOUD_CONFIG_FILE` env var (must exist, or error)
+	/// 2. XDG path ~/.config/kloud/settings.toml (create if not exist)
+	pub fn load() -> Result<Self, crate::Error> {
+		// Check KLOUD_CONFIG_FILE env var first
+		if let Ok(path) = std::env::var("KLOUD_CONFIG_FILE") {
+			let path = PathBuf::from(path);
+			if !path.exists() {
+				return Err(crate::Error::Config(crate::error::ConfigError::FileNotFound(
+					path.to_string_lossy().to_string(),
+				)));
+			}
+			let mut config = Self::load_from_file(&path)?;
+			config.load_from_env();
+			return Ok(config);
+		}
+
+		// Use XDG config path: $XDG_CONFIG_HOME/kloud/settings.toml
+		// Fallback to $HOME/.config/kloud/settings.toml
+		let config_path = if let Ok(xdg_home) = std::env::var("XDG_CONFIG_HOME") {
+			PathBuf::from(xdg_home).join("kloud").join("settings.toml")
+		} else if let Some(base_dirs) = directories::BaseDirs::new() {
+			base_dirs.home_dir().join(".config").join("kloud").join("settings.toml")
+		} else {
+			return Ok(Config::default());
+		};
+
+		if config_path.exists() {
+			// File exists, load and print
+			let mut config = Self::load_from_file(&config_path)?;
+			config.load_from_env();
+			println!("Loaded config from: {:?}", config_path);
+			println!("{:#?}", config);
+			return Ok(config);
+		}
+
+		// File doesn't exist, create default config
+		if let Some(parent) = config_path.parent() {
+			std::fs::create_dir_all(parent).map_err(|e| {
+				crate::Error::Config(crate::error::ConfigError::CreateDirError(e.to_string()))
+			})?;
+		}
+
+		let default_config = Config::default();
+		let toml_str = toml::to_string_pretty(&default_config).map_err(|e| {
+			crate::Error::Config(crate::error::ConfigError::SerializeError(e.to_string()))
+		})?;
+
+		std::fs::write(&config_path, &toml_str).map_err(|e| {
+			crate::Error::Config(crate::error::ConfigError::WriteError(e.to_string()))
+		})?;
+
+		println!("Created default config at: {:?}", config_path);
+		println!("{:#?}", default_config);
+		Ok(default_config)
+	}
+
+	/// Load configuration from a specific file path
+	fn load_from_file(path: &PathBuf) -> Result<Self, crate::Error> {
+		let content = std::fs::read_to_string(path).map_err(|e| {
+			crate::Error::Config(crate::error::ConfigError::ReadError(e.to_string()))
+		})?;
+
+		let config: Config = toml::from_str(&content).map_err(|e| {
+			crate::Error::Config(crate::error::ConfigError::ParseError(e.to_string()))
+		})?;
 
 		Ok(config)
-	}
-
-	/// Load configuration from default locations
-	fn load_from_file() -> Result<Self, crate::Error> {
-		let config_paths = Self::config_paths();
-
-		for path in config_paths {
-			if path.exists() {
-				let content = std::fs::read_to_string(&path).map_err(|e| {
-					crate::Error::Config(crate::error::ConfigError::ReadError(e.to_string()))
-				})?;
-
-				let config: Config = toml::from_str(&content).map_err(|e| {
-					crate::Error::Config(crate::error::ConfigError::ParseError(e.to_string()))
-				})?;
-
-				return Ok(config);
-			}
-		}
-
-		// Return default config if no config file found
-		Ok(Config::default())
-	}
-
-	/// Get configuration file paths in order of priority
-	fn config_paths() -> Vec<PathBuf> {
-		let mut paths = Vec::new();
-
-		// 1. Environment variable
-		if let Ok(path) = std::env::var("KLOUD_CONFIG_FILE") {
-			paths.push(path.into());
-		}
-
-		// 2. User config directory
-		if let Some(dir) = directories::ProjectDirs::from("com", "kloud", "kloud") {
-			paths.push(dir.config_dir().join("config.toml"));
-		}
-
-		// 3. Home directory
-		if let Ok(home) = std::env::var("HOME") {
-			paths.push(PathBuf::from(home).join(".config/kloud/config.toml"));
-		}
-
-		paths
 	}
 }
 
@@ -130,10 +153,6 @@ impl LlmConfig {
 /// Agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-	/// Working directory for agent operations
-	#[serde(default = "default_workdir")]
-	pub workdir: PathBuf,
-
 	/// Maximum concurrent tasks
 	#[serde(default = "default_max_concurrent")]
 	pub max_concurrent: usize,
@@ -146,7 +165,6 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
 	fn default() -> Self {
 		Self {
-			workdir: default_workdir(),
 			max_concurrent: default_max_concurrent(),
 			task_timeout: default_task_timeout(),
 		}
@@ -155,9 +173,6 @@ impl Default for AgentConfig {
 
 impl AgentConfig {
 	fn load_from_env(&mut self) {
-		if let Ok(v) = std::env::var("KLOUD_WORKDIR") {
-			self.workdir = v.into();
-		}
 		if let Ok(v) = std::env::var("KLOUD_MAX_CONCURRENT") {
 			if let Ok(n) = v.parse() {
 				self.max_concurrent = n;
@@ -214,10 +229,6 @@ fn default_max_tokens() -> u32 {
 
 fn default_temperature() -> f32 {
 	0.7
-}
-
-fn default_workdir() -> PathBuf {
-	std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn default_max_concurrent() -> usize {

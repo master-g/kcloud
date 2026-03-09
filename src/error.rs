@@ -52,6 +52,22 @@ pub enum ConfigError {
 	/// Configuration value is invalid
 	#[error("invalid config value: {0}")]
 	InvalidValue(String),
+
+	/// Config file not found at specified path
+	#[error("config file not found: {0}")]
+	FileNotFound(String),
+
+	/// Failed to create config directory
+	#[error("failed to create config directory: {0}")]
+	CreateDirError(String),
+
+	/// Failed to write config file
+	#[error("failed to write config file: {0}")]
+	WriteError(String),
+
+	/// Failed to serialize config to TOML
+	#[error("failed to serialize config: {0}")]
+	SerializeError(String),
 }
 
 /// Tool execution error

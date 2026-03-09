@@ -1,7 +1,7 @@
 //! Kloud - Main entry point
 
 use clap::Parser;
-use kloud::{Result, cli, logging};
+use kloud::{cli, config, logging, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,6 +17,10 @@ async fn main() -> Result<()> {
 
 	tracing::info!("Starting kloud...");
 	tracing::debug!("CLI arguments: {:?}", cli);
+
+	// Load configuration
+	let _config = config::Config::load()?;
+	tracing::debug!("Configuration loaded successfully");
 
 	// Handle subcommands
 	match cli.command {
