@@ -15,6 +15,9 @@ edition = "2021"
 rust-version = "1.75.0"
 
 [workspace.dependencies]
+# Async traits
+async-trait = "0.1.89"
+
 # CLI
 clap = { version = "4.5", features = ["derive", "env", "unicode", "wrap_help"] }
 
@@ -69,6 +72,7 @@ unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "warn"
 
 [dependencies]
+async-trait.workspace = true
 clap.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
